@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Ninja.WebSockets.DemoServer": {
+      "commandName": "Project",
+      "commandLineArgs": "pipe"
+    }
+  }
+}

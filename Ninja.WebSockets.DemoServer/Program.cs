@@ -12,9 +12,14 @@ namespace WebSockets.DemoServer
         static ILogger _logger;
         static ILoggerFactory _loggerFactory;
         static IWebSocketServerFactory _webSocketServerFactory;
+        static bool myIsPipelineImplementation = false;
 
         static void Main(string[] args)
         {
+            if(args.Length == 1)
+            {
+                myIsPipelineImplementation = args[0] == "pipe";
+            }
             _loggerFactory = new LoggerFactory();
             _loggerFactory.AddConsole(LogLevel.Trace);
             _logger = _loggerFactory.CreateLogger<Program>();
@@ -29,10 +34,11 @@ namespace WebSockets.DemoServer
             {
                 int port = 27416;
                 IList<string> supportedSubProtocols = new string[] { "chatV1", "chatV2", "chatV3" };
-                using (WebServer server = new WebServer(_webSocketServerFactory, _loggerFactory, supportedSubProtocols))
+                    string mode = myIsPipelineImplementation == true ? "pipe" : "stream";
+                using (WebServer server = new WebServer(_webSocketServerFactory, _loggerFactory, myIsPipelineImplementation, supportedSubProtocols))
                 {
                     await server.Listen(port);
-                    _logger.LogInformation($"Listening on port {port}");
+                    _logger.LogInformation($"Listening on port {port} in '{ mode}' mode");
                     _logger.LogInformation("Press any key to quit");
                     Console.ReadKey();
                 }

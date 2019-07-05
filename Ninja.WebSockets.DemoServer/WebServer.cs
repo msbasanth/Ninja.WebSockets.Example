@@ -12,6 +12,9 @@ using System.IO.Pipelines;
 using System.Buffers;
 using System.Text;
 using System.Runtime.InteropServices;
+using Ninja.WebSockets.Common;
+using ProtoBuf;
+using ProtoBuf.Meta;
 //using ProtoBuf;
 //using ProtoBuf.Meta;
 
@@ -27,9 +30,10 @@ namespace WebSockets.DemoServer
         private readonly HashSet<string> _supportedSubProtocols;
         // const int BUFFER_SIZE = 1 * 1024 * 1024 * 1024; // 1GB
         const int BUFFER_SIZE = 4 * 1024 * 1024; // 4MB
-
-        public WebServer(IWebSocketServerFactory webSocketServerFactory, ILoggerFactory loggerFactory, IList<string> supportedSubProtocols = null)
+        private bool myIsPipelineImplementation;
+        public WebServer(IWebSocketServerFactory webSocketServerFactory, ILoggerFactory loggerFactory,bool isPipelineImplementation,IList<string> supportedSubProtocols = null)
         {
+            myIsPipelineImplementation = isPipelineImplementation;
             _logger = loggerFactory.CreateLogger<WebServer>();
             _webSocketServerFactory = webSocketServerFactory;
             _loggerFactory = loggerFactory;
@@ -128,68 +132,77 @@ namespace WebSockets.DemoServer
 
         public async Task RespondToWebSocketRequestAsync(WebSocket webSocket, CancellationToken token, PipeWriter pipeWriter)
         {
-             ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[BUFFER_SIZE]);
+            if (!myIsPipelineImplementation)
+            {
+                ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[BUFFER_SIZE]);
 
-             while (true)
-             {
-                 WebSocketReceiveResult result = await webSocket.ReceiveAsync(buffer, token);
-                 if (result.MessageType == WebSocketMessageType.Close)
-                 {
-                     _logger.LogInformation($"Client initiated close. Status: {result.CloseStatus} Description: {result.CloseStatusDescription}");
-                     break;
-                 }
+                while (true)
+                {
+                    WebSocketReceiveResult result = await webSocket.ReceiveAsync(buffer, token);
+                    using (var stream = new MemoryStream(buffer.Array, 0, result.Count))
+                    {
+                        var person = Serializer.Deserialize<Person>(stream);
+                    }
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        _logger.LogInformation($"Client initiated close. Status: {result.CloseStatus} Description: {result.CloseStatusDescription}");
+                        break;
+                    }
 
-                 if (result.Count > BUFFER_SIZE)
-                 {
-                     await webSocket.CloseAsync(WebSocketCloseStatus.MessageTooBig,
-                         $"Web socket frame cannot exceed buffer size of {BUFFER_SIZE:#,##0} bytes. Send multiple frames instead.",
-                         token);
-                     break;
-                 }
+                    if (result.Count > BUFFER_SIZE)
+                    {
+                        await webSocket.CloseAsync(WebSocketCloseStatus.MessageTooBig,
+                            $"Web socket frame cannot exceed buffer size of {BUFFER_SIZE:#,##0} bytes. Send multiple frames instead.",
+                            token);
+                        break;
+                    }
 
-                 // just echo the message back to the client
-                 ArraySegment<byte> toSend = new ArraySegment<byte>(buffer.Array, buffer.Offset, result.Count);
-                 await webSocket.SendAsync(toSend, WebSocketMessageType.Binary, true, token);
+                    ArraySegment<byte> toSend = new ArraySegment<byte>(buffer.Array, buffer.Offset, result.Count);
+                    await webSocket.SendAsync(toSend, WebSocketMessageType.Binary, true, token);
+                }
             }
-            /*const int minimumBufferSize = BUFFER_SIZE;
+            else
+            {
+                const int minimumBufferSize = BUFFER_SIZE;
 
-             while (true)
-             {
-                 try
-                 {
-                     Memory<byte> memory = pipeWriter.GetMemory(minimumBufferSize);
-                     WebSocketReceiveResult result = await webSocket.ReceiveAsync(memory);
-                     if (result.MessageType == WebSocketMessageType.Close)
-                     {
-                         _logger.LogInformation($"Client initiated close. Status: {result.CloseStatus} Description: {result.CloseStatusDescription}");
-                         break;
-                     }
+                while (true)
+                {
+                    try
+                    {
+                        Memory<byte> memory = pipeWriter.GetMemory(minimumBufferSize);
+                        WebSocketReceiveResult result = await webSocket.ReceiveAsync(memory);
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            _logger.LogInformation($"Client initiated close. Status: {result.CloseStatus} Description: {result.CloseStatusDescription}");
+                            break;
+                        }
 
-                     if (result.Count > BUFFER_SIZE)
-                     {
-                         await webSocket.CloseAsync(WebSocketCloseStatus.MessageTooBig,
-                             $"Web socket frame cannot exceed buffer size of {BUFFER_SIZE:#,##0} bytes. Send multiple frames instead.",
-                             token);
-                         break;
-                     }
-                     pipeWriter.Advance(result.Count);
-                 }
-                 catch (Exception ex)
-                 {
-                     break;
-                 }
-                 // Make the data available to the PipeReader
-                 FlushResult flushResult = await pipeWriter.FlushAsync();
+                        if (result.Count > BUFFER_SIZE)
+                        {
+                            await webSocket.CloseAsync(WebSocketCloseStatus.MessageTooBig,
+                                $"Web socket frame cannot exceed buffer size of {BUFFER_SIZE:#,##0} bytes. Send multiple frames instead.",
+                                token);
+                            break;
+                        }
+                        pipeWriter.Advance(result.Count);
+                    }
+                    catch (Exception ex)
+                    {
+                        break;
+                    }
+                    // Make the data available to the PipeReader
+                    FlushResult flushResult = await pipeWriter.FlushAsync();
 
-                 if (flushResult.IsCompleted)
-                 {
-                     break;
-                 }
-             }
-             // Signal to the reader that we're done writing
-             pipeWriter.Complete();*/
+                    if (flushResult.IsCompleted)
+                    {
+                        break;
+                    }
+                }
+                // Signal to the reader that we're done writing
+                pipeWriter.Complete();
+            }
         }
-
+       
         public async Task Listen(int port)
         {
             try
@@ -197,7 +210,7 @@ namespace WebSockets.DemoServer
                 IPAddress localAddress = IPAddress.Any;
                 _listener = new TcpListener(localAddress, port);
                 _listener.Start();
-                _logger.LogInformation($"Server started listening on port {port}");
+                _logger.LogInformation($"Server started listening on port {port} in pipe = {myIsPipelineImplementation}");
                 while(true)
                 {
                     TcpClient tcpClient = await _listener.AcceptTcpClientAsync();
@@ -256,27 +269,28 @@ namespace WebSockets.DemoServer
 
         private async Task ProcessLine(WebSocket socket, ReadOnlySequence<byte> buffer, CancellationToken token)
         {
-            //try
-            //{
-            //    var person = Deserialize(buffer);
-            //}
-            //catch (Exception ex)
-            //{
-
-            //}
+            try
+            {
+                var person = Deserialize(buffer);
+           
             foreach (var segment in buffer)
             {
 #if NETCOREAPP2_1
-                Console.Write(Encoding.UTF8.GetString(segment.Span));
+                await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
 #else
                 await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
                 //byte[] newline = Encoding.ASCII.GetBytes(Environment.NewLine);
                 //await socket.SendAsync(newline, WebSocketMessageType.Binary, true, token);
 #endif
             }
+             }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
         }
 
-        /*private Person Deserialize(ReadOnlySequence<byte> buffer)
+        private Person Deserialize(ReadOnlySequence<byte> buffer)
         {
             var reader = ProtoReader.Create(out ProtoReader.State state, buffer, RuntimeTypeModel.Default, new SerializationContext());
             var data = new Person();
@@ -318,7 +332,7 @@ namespace WebSockets.DemoServer
             }
 
             return data;
-        }*/
+        }
 
         public void Dispose()
         {
