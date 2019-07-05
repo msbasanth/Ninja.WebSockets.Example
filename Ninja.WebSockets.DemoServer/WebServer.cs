@@ -31,9 +31,12 @@ namespace WebSockets.DemoServer
         // const int BUFFER_SIZE = 1 * 1024 * 1024 * 1024; // 1GB
         const int BUFFER_SIZE = 4 * 1024 * 1024; // 4MB
         private bool myIsPipelineImplementation;
-        public WebServer(IWebSocketServerFactory webSocketServerFactory, ILoggerFactory loggerFactory,bool isPipelineImplementation,IList<string> supportedSubProtocols = null)
+        private bool myIsProtobufSerializationEnabled;
+
+        public WebServer(IWebSocketServerFactory webSocketServerFactory, ILoggerFactory loggerFactory, bool isPipelineImplementation, bool isProtobufSerializationEnabled, IList<string> supportedSubProtocols = null)
         {
             myIsPipelineImplementation = isPipelineImplementation;
+            myIsProtobufSerializationEnabled = isProtobufSerializationEnabled;
             _logger = loggerFactory.CreateLogger<WebServer>();
             _webSocketServerFactory = webSocketServerFactory;
             _loggerFactory = loggerFactory;
@@ -139,9 +142,12 @@ namespace WebSockets.DemoServer
                 while (true)
                 {
                     WebSocketReceiveResult result = await webSocket.ReceiveAsync(buffer, token);
-                    using (var stream = new MemoryStream(buffer.Array, 0, result.Count))
+                    if (myIsProtobufSerializationEnabled)
                     {
-                        var person = Serializer.Deserialize<Person>(stream);
+                        using (var stream = new MemoryStream(buffer.Array, 0, result.Count))
+                        {
+                            var person = Serializer.Deserialize<Person>(stream);
+                        }
                     }
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
@@ -202,7 +208,7 @@ namespace WebSockets.DemoServer
                 pipeWriter.Complete();
             }
         }
-       
+
         public async Task Listen(int port)
         {
             try
@@ -211,7 +217,7 @@ namespace WebSockets.DemoServer
                 _listener = new TcpListener(localAddress, port);
                 _listener.Start();
                 _logger.LogInformation($"Server started listening on port {port} in pipe = {myIsPipelineImplementation}");
-                while(true)
+                while (true)
                 {
                     TcpClient tcpClient = await _listener.AcceptTcpClientAsync();
                     ProcessTcpClient(tcpClient);
@@ -271,19 +277,22 @@ namespace WebSockets.DemoServer
         {
             try
             {
-                var person = Deserialize(buffer);
-           
-            foreach (var segment in buffer)
-            {
+                if (myIsProtobufSerializationEnabled)
+                {
+                    var person = Deserialize(buffer);
+                }
+
+                foreach (var segment in buffer)
+                {
 #if NETCOREAPP2_1
-                await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
+                    await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
 #else
                 await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
                 //byte[] newline = Encoding.ASCII.GetBytes(Environment.NewLine);
                 //await socket.SendAsync(newline, WebSocketMessageType.Binary, true, token);
 #endif
+                }
             }
-             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.ToString());
@@ -355,40 +364,40 @@ namespace WebSockets.DemoServer
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError( ex.ToString());
+                    _logger.LogError(ex.ToString());
                 }
-                
-                _logger.LogInformation( "Web Server disposed");
+
+                _logger.LogInformation("Web Server disposed");
             }
         }
     }
-        internal static class Extensions
+    internal static class Extensions
+    {
+        public static Task<WebSocketReceiveResult> ReceiveAsync(this WebSocket socket, Memory<byte> memory)
         {
-            public static Task<WebSocketReceiveResult> ReceiveAsync(this WebSocket socket, Memory<byte> memory)
+            var arraySegment = GetArray(memory);
+            return socket.ReceiveAsync(arraySegment, CancellationToken.None);
+        }
+
+        public static string GetString(this Encoding encoding, ReadOnlyMemory<byte> memory)
+        {
+            var arraySegment = GetArray(memory);
+            return encoding.GetString(arraySegment.Array, arraySegment.Offset, arraySegment.Count);
+        }
+
+        private static ArraySegment<byte> GetArray(Memory<byte> memory)
+        {
+            return GetArray((ReadOnlyMemory<byte>)memory);
+        }
+
+        private static ArraySegment<byte> GetArray(ReadOnlyMemory<byte> memory)
+        {
+            if (!MemoryMarshal.TryGetArray(memory, out var result))
             {
-                var arraySegment = GetArray(memory);
-                return socket.ReceiveAsync(arraySegment, CancellationToken.None);
+                throw new InvalidOperationException("Buffer backed by array was expected");
             }
 
-            public static string GetString(this Encoding encoding, ReadOnlyMemory<byte> memory)
-            {
-                var arraySegment = GetArray(memory);
-                return encoding.GetString(arraySegment.Array, arraySegment.Offset, arraySegment.Count);
-            }
-
-            private static ArraySegment<byte> GetArray(Memory<byte> memory)
-            {
-                return GetArray((ReadOnlyMemory<byte>)memory);
-            }
-
-            private static ArraySegment<byte> GetArray(ReadOnlyMemory<byte> memory)
-            {
-                if (!MemoryMarshal.TryGetArray(memory, out var result))
-                {
-                    throw new InvalidOperationException("Buffer backed by array was expected");
-                }
-
-                return result;
-            }
+            return result;
         }
     }
+}
