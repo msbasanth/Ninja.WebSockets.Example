@@ -15,8 +15,6 @@ using System.Runtime.InteropServices;
 using Ninja.WebSockets.Common;
 using ProtoBuf;
 using ProtoBuf.Meta;
-//using ProtoBuf;
-//using ProtoBuf.Meta;
 
 namespace WebSockets.DemoServer
 {
@@ -28,12 +26,16 @@ namespace WebSockets.DemoServer
         private readonly IWebSocketServerFactory _webSocketServerFactory;
         private readonly ILoggerFactory _loggerFactory;
         private readonly HashSet<string> _supportedSubProtocols;
-        // const int BUFFER_SIZE = 1 * 1024 * 1024 * 1024; // 1GB
-        const int BUFFER_SIZE = 4 * 1024 * 1024; // 4MB
+        private int myBufferSize = 4 * 1024 * 1024; // 4MB
         private bool myIsPipelineImplementation;
         private bool myIsProtobufSerializationEnabled;
 
-        public WebServer(IWebSocketServerFactory webSocketServerFactory, ILoggerFactory loggerFactory, bool isPipelineImplementation, bool isProtobufSerializationEnabled, IList<string> supportedSubProtocols = null)
+        public WebServer(IWebSocketServerFactory webSocketServerFactory, 
+            ILoggerFactory loggerFactory, 
+            bool isPipelineImplementation, 
+            bool isProtobufSerializationEnabled, 
+            bool isLoadTest, 
+            IList<string> supportedSubProtocols = null)
         {
             myIsPipelineImplementation = isPipelineImplementation;
             myIsProtobufSerializationEnabled = isProtobufSerializationEnabled;
@@ -41,6 +43,10 @@ namespace WebSockets.DemoServer
             _webSocketServerFactory = webSocketServerFactory;
             _loggerFactory = loggerFactory;
             _supportedSubProtocols = new HashSet<string>(supportedSubProtocols ?? new string[0]);
+            if (isLoadTest)
+            {
+                myBufferSize = 1 * 1024 * 1024 * 1024; // 1GB
+            }
         }
 
         private async Task ProcessTcpClient(TcpClient tcpClient)
@@ -137,45 +143,49 @@ namespace WebSockets.DemoServer
         {
             if (!myIsPipelineImplementation)
             {
-                ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[BUFFER_SIZE]);
-
-                while (true)
+                ArraySegment<byte> buffer = new ArraySegment<byte>(new byte[myBufferSize]);
+                try
                 {
-                    WebSocketReceiveResult result = await webSocket.ReceiveAsync(buffer, token);
-                    if (myIsProtobufSerializationEnabled)
+                    while (true)
                     {
-                        using (var stream = new MemoryStream(buffer.Array, 0, result.Count))
+                        WebSocketReceiveResult result = await webSocket.ReceiveAsync(buffer, token);
+                        if (myIsProtobufSerializationEnabled)
                         {
-                            var person = Serializer.Deserialize<Person>(stream);
+                            using (var stream = new MemoryStream(buffer.Array, 0, result.Count))
+                            {
+                                var person = Serializer.Deserialize<Person>(stream);
+                            }
                         }
-                    }
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        _logger.LogInformation($"Client initiated close. Status: {result.CloseStatus} Description: {result.CloseStatusDescription}");
-                        break;
-                    }
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            _logger.LogInformation($"Client initiated close. Status: {result.CloseStatus} Description: {result.CloseStatusDescription}");
+                            break;
+                        }
 
-                    if (result.Count > BUFFER_SIZE)
-                    {
-                        await webSocket.CloseAsync(WebSocketCloseStatus.MessageTooBig,
-                            $"Web socket frame cannot exceed buffer size of {BUFFER_SIZE:#,##0} bytes. Send multiple frames instead.",
-                            token);
-                        break;
-                    }
+                        if (result.Count > myBufferSize)
+                        {
+                            await webSocket.CloseAsync(WebSocketCloseStatus.MessageTooBig,
+                                $"Web socket frame cannot exceed buffer size of {myBufferSize:#,##0} bytes. Send multiple frames instead.",
+                                token);
+                            break;
+                        }
 
-                    ArraySegment<byte> toSend = new ArraySegment<byte>(buffer.Array, buffer.Offset, result.Count);
-                    await webSocket.SendAsync(toSend, WebSocketMessageType.Binary, true, token);
+                        ArraySegment<byte> toSend = new ArraySegment<byte>(buffer.Array, buffer.Offset, result.Count);
+                        await webSocket.SendAsync(toSend, WebSocketMessageType.Binary, true, token);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.ToString());
                 }
             }
             else
             {
-                const int minimumBufferSize = BUFFER_SIZE;
-
                 while (true)
                 {
                     try
                     {
-                        Memory<byte> memory = pipeWriter.GetMemory(minimumBufferSize);
+                        Memory<byte> memory = pipeWriter.GetMemory(myBufferSize);
                         WebSocketReceiveResult result = await webSocket.ReceiveAsync(memory);
                         if (result.MessageType == WebSocketMessageType.Close)
                         {
@@ -183,10 +193,10 @@ namespace WebSockets.DemoServer
                             break;
                         }
 
-                        if (result.Count > BUFFER_SIZE)
+                        if (result.Count > myBufferSize)
                         {
                             await webSocket.CloseAsync(WebSocketCloseStatus.MessageTooBig,
-                                $"Web socket frame cannot exceed buffer size of {BUFFER_SIZE:#,##0} bytes. Send multiple frames instead.",
+                                $"Web socket frame cannot exceed buffer size of {myBufferSize:#,##0} bytes. Send multiple frames instead.",
                                 token);
                             break;
                         }
@@ -194,6 +204,7 @@ namespace WebSockets.DemoServer
                     }
                     catch (Exception ex)
                     {
+                        Console.WriteLine(ex.ToString());
                         break;
                     }
                     // Make the data available to the PipeReader

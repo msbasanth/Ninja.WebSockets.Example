@@ -23,6 +23,11 @@ namespace WebSockets.DemoClient
                 RunComplexTest(args).Wait();
                 Console.ReadLine();
             }
+            else if (args.Length == 1)
+            {
+                RunLoadTest().Wait();
+                Console.ReadLine();
+            }
             else
             {
                 Console.WriteLine("Wrong number of arguments. 0 for simple test. 5 for complex test.");
