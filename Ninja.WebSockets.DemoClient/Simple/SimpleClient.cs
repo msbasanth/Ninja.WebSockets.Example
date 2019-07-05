@@ -8,9 +8,6 @@ using System.Threading.Tasks;
 using System.IO.Pipelines;
 using System.Buffers;
 using System.Runtime.InteropServices;
-//using ProtoBuf;
-using System.IO;
-//using ProtoBuf.Meta;
 
 namespace WebSockets.DemoClient.Simple
 {
@@ -27,11 +24,12 @@ namespace WebSockets.DemoClient.Simple
                 Task readTask = Receive(webSocket, pipe.Writer);
                 Task reading = ReadPipeAsync(webSocket, pipe.Reader);
 
-                // send a message
-                await Send(webSocket);
-
-                // TODO: Me Added
-                Console.ReadLine();
+                for (int i = 0; i < 10; i++)
+                {
+                    // send a message
+                    await Send(webSocket);
+                    Console.ReadLine();
+                }
 
                 // initiate the close handshake
                 await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
@@ -46,56 +44,7 @@ namespace WebSockets.DemoClient.Simple
             var array = Encoding.UTF8.GetBytes("Hello World\n");
             var buffer = new ArraySegment<byte>(array);
             await webSocket.SendAsync(buffer, WebSocketMessageType.Binary, true, CancellationToken.None);
-            /*var person = new Person
-            {
-                Name = "Fred"
-            };
-            byte[] streamArray;
-            using (var stream = new MemoryStream())
-            {
-                Serializer.Serialize(stream, person);
-                stream.Position = 0;
-                var newPerson = Serializer.Deserialize<Person>(stream);
-                streamArray = stream.ToArray();
-                ReadOnlyMemory<byte> readOnlyMemory = new ReadOnlyMemory<byte>(streamArray);
-
-                try
-                {
-                    var jaba = Deserialize(readOnlyMemory);
-                }
-                catch (Exception ex)
-                {
-
-                }
-                var buffer = new ArraySegment<byte>(streamArray);
-                await webSocket.SendAsync(buffer, WebSocketMessageType.Binary, true, CancellationToken.None);
-            }*/
         }
-        /*private Person Deserialize(ReadOnlyMemory<byte> buffer)
-        {
-            RuntimeTypeModel model = TypeModel.Create();
-            model.Add(typeof(Person), true);
-
-            var reader = ProtoReader.Create(out ProtoReader.State state, buffer, model, new SerializationContext());
-            var data = new Person();
-
-            int header = 0;
-            while ((header = reader.ReadFieldHeader(ref state)) > 0)
-            {
-                switch (header)
-                {
-                    case 1:
-                        data.Name = reader.ReadString(ref state);
-                        break;
-                    default:
-                        reader.SkipField(ref state);
-                        break;
-                }
-            }
-
-            return data;
-        }*/
-
 
         private async Task Receive(WebSocket webSocket, PipeWriter writer)
         {
@@ -113,16 +62,16 @@ namespace WebSockets.DemoClient.Simple
                     }
                     // Tell the PipeWriter how much was read
                     writer.Advance(result.Count);
-                    //switch (result.MessageType)
-                    //{
-                    //    case WebSocketMessageType.Close:
-                    //        return;
-                    //    case WebSocketMessageType.Text:
-                    //    case WebSocketMessageType.Binary:
-                    //        string value = Encoding.UTF8.GetString(memory.ToArray(), 0, result.Count);
-                    //        Console.WriteLine(value);
-                    //        break;
-                    //}
+                    switch (result.MessageType)
+                    {
+                        case WebSocketMessageType.Close:
+                            return;
+                        case WebSocketMessageType.Text:
+                        case WebSocketMessageType.Binary:
+                            string value = Encoding.UTF8.GetString(memory.ToArray(), 0, result.Count);
+                            Console.WriteLine(value);
+                            break;
+                    }
                 }
                 catch
                 {
