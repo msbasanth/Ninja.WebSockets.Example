@@ -15,6 +15,7 @@ using System.Runtime.InteropServices;
 using Ninja.WebSockets.Common;
 using ProtoBuf;
 using ProtoBuf.Meta;
+using System.Diagnostics;
 
 namespace WebSockets.DemoServer
 {
@@ -26,15 +27,17 @@ namespace WebSockets.DemoServer
         private readonly IWebSocketServerFactory _webSocketServerFactory;
         private readonly ILoggerFactory _loggerFactory;
         private readonly HashSet<string> _supportedSubProtocols;
-        private int myBufferSize = 4 * 1024 * 1024; // 4MB
+        private int myBufferSize = 1024 * 1024; // 1MB
         private bool myIsPipelineImplementation;
         private bool myIsProtobufSerializationEnabled;
+        private Stopwatch stopwatch;
 
         public WebServer(IWebSocketServerFactory webSocketServerFactory, 
             ILoggerFactory loggerFactory, 
             bool isPipelineImplementation, 
             bool isProtobufSerializationEnabled, 
             bool isLoadTest, 
+            int bufferSizeInBytes,
             IList<string> supportedSubProtocols = null)
         {
             myIsPipelineImplementation = isPipelineImplementation;
@@ -46,6 +49,10 @@ namespace WebSockets.DemoServer
             if (isLoadTest)
             {
                 myBufferSize = 1 * 1024 * 1024 * 1024; // 1GB
+            }
+            else
+            {
+                myBufferSize = bufferSizeInBytes != -1 ? bufferSizeInBytes : 1024 * 1024;
             }
         }
 
@@ -139,6 +146,8 @@ namespace WebSockets.DemoServer
             }
         }
 
+        private int receivedMessages = 0;
+
         public async Task RespondToWebSocketRequestAsync(WebSocket webSocket, CancellationToken token, PipeWriter pipeWriter)
         {
             if (!myIsPipelineImplementation)
@@ -149,6 +158,14 @@ namespace WebSockets.DemoServer
                     while (true)
                     {
                         WebSocketReceiveResult result = await webSocket.ReceiveAsync(buffer, token);
+                        if (receivedMessages == 0)
+                        {
+                            Console.WriteLine($"Started!!");
+                            stopwatch = Stopwatch.StartNew();
+                            stopwatch.Start();
+                        }
+                        receivedMessages++;
+
                         if (myIsProtobufSerializationEnabled)
                         {
                             using (var stream = new MemoryStream(buffer.Array, 0, result.Count))
@@ -169,9 +186,14 @@ namespace WebSockets.DemoServer
                                 token);
                             break;
                         }
+                        if (receivedMessages == Constants.NoOfIterations)
+                        {
+                            Console.WriteLine($"Completed in {stopwatch.Elapsed.TotalMilliseconds:#,##0.00} ms");
+                        }
 
                         ArraySegment<byte> toSend = new ArraySegment<byte>(buffer.Array, buffer.Offset, result.Count);
                         await webSocket.SendAsync(toSend, WebSocketMessageType.Binary, true, token);
+                        
                     }
                 }
                 catch (Exception ex)
@@ -187,6 +209,14 @@ namespace WebSockets.DemoServer
                     {
                         Memory<byte> memory = pipeWriter.GetMemory(myBufferSize);
                         WebSocketReceiveResult result = await webSocket.ReceiveAsync(memory);
+
+                        if (receivedMessages == 0)
+                        {
+                            Console.WriteLine($"Started!!");
+                            stopwatch = Stopwatch.StartNew();
+                            stopwatch.Start();
+                            receivedMessages++;
+                        }
                         if (result.MessageType == WebSocketMessageType.Close)
                         {
                             _logger.LogInformation($"Client initiated close. Status: {result.CloseStatus} Description: {result.CloseStatusDescription}");
@@ -246,33 +276,17 @@ namespace WebSockets.DemoServer
             while (true)
             {
                 ReadResult result = await reader.ReadAsync();
-
                 ReadOnlySequence<byte> buffer = result.Buffer;
-                await ProcessLine(socket, buffer, token);
-                buffer = buffer.Slice(buffer.Length);
+                do
+                {
+                    var line = buffer.Slice(0, myBufferSize);
+                    await ProcessLine(socket, line, token);
+                    buffer = buffer.Slice(myBufferSize);
+                }
+                while (buffer.Length >= myBufferSize);
 
-                //do
-                //{
-                //    // Find the EOL
-                //    position = buffer.PositionOf((byte)'\n');
-
-                //    if (position != null)
-                //    {
-                //        var line = buffer.Slice(0, position.Value);
-
-                //        await ProcessLine(socket, line, token);
-
-                //        // This is equivalent to position + 1
-                //        var next = buffer.GetPosition(1, position.Value);
-
-                //        // Skip what we've already processed including \n
-                //        buffer = buffer.Slice(next);
-                //    }
-                //}
-                //while (position != null);
-
-                // We sliced the buffer until no more data could be processed
-                // Tell the PipeReader how much we consumed and how much we left to process
+                //We sliced the buffer until no more data could be processed
+                //Tell the PipeReader how much we consumed and how much we left to process
                 reader.AdvanceTo(buffer.Start, buffer.End);
 
                 if (result.IsCompleted)
@@ -293,14 +307,21 @@ namespace WebSockets.DemoServer
                     var person = Deserialize(buffer);
                 }
 
+                receivedMessages++;
+                if (receivedMessages == Constants.NoOfIterations)
+                {
+                    Console.WriteLine($"Completed in {stopwatch.Elapsed.TotalMilliseconds:#,##0.00} ms");
+                }
+
                 foreach (var segment in buffer)
                 {
 #if NETCOREAPP2_1
-                    await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
+                    if (segment.Length != 0)
+                    {
+                        await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
+                    }
 #else
-                await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
-                //byte[] newline = Encoding.ASCII.GetBytes(Environment.NewLine);
-                //await socket.SendAsync(newline, WebSocketMessageType.Binary, true, token);
+                    await socket.SendAsync(segment.ToArray(), WebSocketMessageType.Binary, true, token);
 #endif
                 }
             }

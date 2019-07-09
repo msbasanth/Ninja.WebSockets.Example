@@ -18,6 +18,7 @@ namespace WebSockets.DemoServer
             bool isPipelineImplementation = false;
             bool isProtobufSerializationEnabled = false;
             bool isLoadTest = false;
+            int maxBinaryBytes = -1;
             if (args.Contains("pipe"))
             {
                 isPipelineImplementation = true;
@@ -30,23 +31,31 @@ namespace WebSockets.DemoServer
             {
                 isLoadTest = true;
             }
+            foreach (string arg in args)
+            {
+               if(int.TryParse(arg, out maxBinaryBytes))
+                {
+                    break;
+                }
+            }
+           
             _loggerFactory = new LoggerFactory();
             _loggerFactory.AddConsole(LogLevel.Trace);
             _logger = _loggerFactory.CreateLogger<Program>();
             _webSocketServerFactory = new WebSocketServerFactory();
-            Console.WriteLine("Pipeline enabled: {0}, Protobuf serialization enabled: {1}, Load test: {2}", isPipelineImplementation, isProtobufSerializationEnabled, isLoadTest);
-            Task task = StartWebServer(isPipelineImplementation, isProtobufSerializationEnabled, isLoadTest);
+            Console.WriteLine("Pipeline enabled: {0}, Protobuf serialization enabled: {1}, Load test: {2}, MaxBinaryBytes: {3}", isPipelineImplementation, isProtobufSerializationEnabled, isLoadTest, maxBinaryBytes);
+            Task task = StartWebServer(isPipelineImplementation, isProtobufSerializationEnabled, isLoadTest, maxBinaryBytes);
             task.Wait();
         }
 
-        static async Task StartWebServer(bool isPipelineMode, bool protoBufEnabled, bool isLoadTest)
+        static async Task StartWebServer(bool isPipelineMode, bool protoBufEnabled, bool isLoadTest, int maxBinaryBytes)
         {
             try
             {
                 int port = 27416;
                 IList<string> supportedSubProtocols = new string[] { "chatV1", "chatV2", "chatV3" };
                     string mode = isPipelineMode == true ? "pipe" : "stream";
-                using (WebServer server = new WebServer(_webSocketServerFactory, _loggerFactory, isPipelineMode, protoBufEnabled, isLoadTest, supportedSubProtocols))
+                using (WebServer server = new WebServer(_webSocketServerFactory, _loggerFactory, isPipelineMode, protoBufEnabled, isLoadTest, maxBinaryBytes, supportedSubProtocols))
                 {
                     await server.Listen(port);
                     _logger.LogInformation($"Listening on port {port} in '{ mode}' mode");

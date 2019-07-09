@@ -2,7 +2,7 @@
   "profiles": {
     "Ninja.WebSockets.DemoServer": {
       "commandName": "Project",
-      "commandLineArgs": "pipe"
+      "commandLineArgs": "1000000 pipe"
     }
   }
 }

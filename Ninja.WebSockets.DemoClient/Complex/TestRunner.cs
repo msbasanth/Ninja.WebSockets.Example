@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace WebSockets.DemoClient.Complex
@@ -26,7 +24,7 @@ namespace WebSockets.DemoClient.Complex
         public void Run()
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
-            Parallel.For(0, _numThreads, Run);
+            Parallel.For(0, 1, Run);
             Console.WriteLine($"Completed in {stopwatch.Elapsed.TotalMilliseconds:#,##0.00} ms");
         }
 

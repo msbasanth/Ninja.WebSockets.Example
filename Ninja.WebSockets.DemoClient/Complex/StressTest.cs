@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.WebSockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Ninja.WebSockets;
+using Ninja.WebSockets.Common;
+using ProtoBuf;
 
 namespace WebSockets.DemoClient.Complex
 {
@@ -20,17 +21,42 @@ namespace WebSockets.DemoClient.Complex
         WebSocket _webSocket;
         CancellationToken _token;
         byte[][] _expectedValues;
-        private readonly IWebSocketClientFactory _clientFactory;        
+        private readonly IWebSocketClientFactory _clientFactory;
+        private ArraySegment<byte> myTestBytes;
+        private int receivedMessages = 0;
 
-        public StressTest(int seed, Uri uri, int numItems, int minNumBytesPerMessage, int maxNumBytesPerMessage)
+        public StressTest(int seed, Uri uri, int numItems, int minNumBytesPerMessage, int maxBytesPerMessage)
         {
+            myTestBytes = GetPersonBytes(maxBytesPerMessage - GetDifference(maxBytesPerMessage));
             _seed = seed;
             _uri = uri;
             _numItems = numItems;
-            _minNumBytesPerMessage = minNumBytesPerMessage;
-            _maxNumBytesPerMessage = maxNumBytesPerMessage;
+            _minNumBytesPerMessage = minNumBytesPerMessage ;
+            _maxNumBytesPerMessage = maxBytesPerMessage;
             _clientFactory = new WebSocketClientFactory();
         }
+
+        private static int GetDifference(int numberOfBytesRequested)
+        {
+            return (int)Math.Floor((double)(numberOfBytesRequested.ToString().Length / 2)) + 1;
+        }
+
+        private ArraySegment<byte> GetPersonBytes(int count)
+        {
+            var person = new Person
+            {
+                Name = new string('a', count)
+            };
+            byte[] streamArray;
+            using (var stream = new MemoryStream())
+            {
+                Serializer.Serialize(stream, person);
+                stream.Position = 0;
+                streamArray = stream.ToArray();
+                return new ArraySegment<byte>(streamArray);
+            }
+        }
+        Stopwatch stopwatch;
 
         public async Task Run()
         {
@@ -41,32 +67,42 @@ namespace WebSockets.DemoClient.Complex
             {
                 var source = new CancellationTokenSource();
                 _token = source.Token;
-
-                Random rand = new Random(_seed);
-                _expectedValues = new byte[50][];
-                for (int i = 0; i < _expectedValues.Length; i++)
-                {
-                    int numBytes = rand.Next(_minNumBytesPerMessage, _maxNumBytesPerMessage);
-                    byte[] bytes = new byte[numBytes];
-                    rand.NextBytes(bytes);
-                    _expectedValues[i] = bytes;
-                }
-
                 Task recTask = Task.Run(ReceiveLoop);
-                byte[] sendBuffer = new byte[_maxNumBytesPerMessage];
-                for (int i = 0; i < _numItems; i++)
+                stopwatch = Stopwatch.StartNew();
+                for (int i = 0; i < Constants.NoOfIterations; i++)
                 {
-                    int index = i % _expectedValues.Length;
-                    byte[] bytes = _expectedValues[index];
-                    Buffer.BlockCopy(bytes, 0, sendBuffer, 0, bytes.Length);
-                    ArraySegment<byte> buffer = new ArraySegment<byte>(sendBuffer, 0, bytes.Length);
-                    await _webSocket.SendAsync(buffer, WebSocketMessageType.Binary, true, source.Token);
+                    var buffer = myTestBytes.Array.Clone() as byte[];
+                    await _webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Binary, true, source.Token);
                 }
-
-                await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, source.Token);
                 recTask.Wait();
+
+                /* Random rand = new Random(_seed);
+                 _expectedValues = new byte[50][];
+                 for (int i = 0; i < _expectedValues.Length; i++)
+                 {
+                     int numBytes = rand.Next(_minNumBytesPerMessage, _maxNumBytesPerMessage);
+                     byte[] bytes = new byte[numBytes];
+                     rand.NextBytes(bytes);
+                     _expectedValues[i] = bytes;
+                 }
+
+                 Task recTask = Task.Run(ReceiveLoop);
+                 byte[] sendBuffer = new byte[_maxNumBytesPerMessage];
+                 for (int i = 0; i < _numItems; i++)
+                 {
+                     int index = i % _expectedValues.Length;
+                     byte[] bytes = _expectedValues[index];
+                     Buffer.BlockCopy(bytes, 0, sendBuffer, 0, bytes.Length);
+                     ArraySegment<byte> buffer = new ArraySegment<byte>(sendBuffer, 0, bytes.Length);
+                     await _webSocket.SendAsync(myPersonBytesMap[_maxNumBytesPerMessage], WebSocketMessageType.Binary, true, source.Token);
+                 }
+
+                 await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, source.Token);
+                 recTask.Wait();*/
             }
         }
+
+        int count = 0;
 
         private static bool AreEqual(byte[] actual, byte[] expected, int countActual)
         {
@@ -75,7 +111,7 @@ namespace WebSockets.DemoClient.Complex
                 return false;
             }
 
-            for (int i=0; i< countActual; i++)
+            for (int i = 0; i < countActual; i++)
             {
                 if (actual[i] != expected[i])
                 {
@@ -86,6 +122,7 @@ namespace WebSockets.DemoClient.Complex
             return true;
         }
 
+
         private async Task ReceiveLoop()
         {
             // the recArray should be large enough to at least receive control frames like Ping and Close frames (with payload)
@@ -94,38 +131,54 @@ namespace WebSockets.DemoClient.Complex
             var recArray = new byte[size];
             var recBuffer = new ArraySegment<byte>(recArray);
 
-            int i = 0;
-            while(true)
+            try
             {
-                WebSocketReceiveResult result = await _webSocket.ReceiveAsync(recBuffer, _token);
+                int i = 0;
+                while (true)
+                {
+                    WebSocketReceiveResult result = await _webSocket.ReceiveAsync(recBuffer, _token);
+                    if (result.EndOfMessage)
+                    {
+                        receivedMessages++;
+                    }
+                    if (receivedMessages == Constants.NoOfIterations)
+                    {
+                        Console.WriteLine($"Completed in {stopwatch.Elapsed.TotalMilliseconds:#,##0.00} ms");
+                    }
+                    if (!result.EndOfMessage)
+                    {
+                        throw new Exception("Multi frame messages not supported");
+                    }
 
-                if (!result.EndOfMessage)
-                {
-                    throw new Exception("Multi frame messages not supported");
-                }
+                    if (result.MessageType == WebSocketMessageType.Close || _token.IsCancellationRequested)
+                    {
+                        Console.WriteLine("Closed");
+                        return;
+                    }
 
-                if (result.MessageType == WebSocketMessageType.Close || _token.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                if (result.Count == 0)
-                {
-                    await _webSocket.CloseOutputAsync(WebSocketCloseStatus.InvalidPayloadData, "Zero bytes in payload", _token);
-                    return;
-                }
-                
-                byte[] valueActual = recBuffer.Array;
-                int index = i % _expectedValues.Length;
-                i++;
-                byte[] valueExpected = _expectedValues[index];
-                
-                if (!AreEqual(valueActual, valueExpected, result.Count))
-                {
-                    await _webSocket.CloseOutputAsync(WebSocketCloseStatus.InvalidPayloadData, "Value actual does not equal value expected", _token);
-                    throw new Exception($"Expected: {valueExpected.Length} bytes Actual: {result.Count} bytes. Contents different.");
+                    if (result.Count == 0)
+                    {
+                        Console.WriteLine("Count = 0");
+                        await _webSocket.CloseOutputAsync(WebSocketCloseStatus.InvalidPayloadData, "Zero bytes in payload", _token);
+                        return;
+                    }
                 }
             }
+            catch (Exception exception)
+            {
+                Console.WriteLine(exception);
+            }
+
+            //byte[] valueActual = recBuffer.Array;
+            //int index = i % _expectedValues.Length;
+            //i++;
+            //byte[] valueExpected = _expectedValues[index];
+
+            //if (!AreEqual(valueActual, valueExpected, result.Count))
+            //{
+            //    await _webSocket.CloseOutputAsync(WebSocketCloseStatus.InvalidPayloadData, "Value actual does not equal value expected", _token);
+            //    throw new Exception($"Expected: {valueExpected.Length} bytes Actual: {result.Count} bytes. Contents different.");
+            //}
         }
     }
 }
