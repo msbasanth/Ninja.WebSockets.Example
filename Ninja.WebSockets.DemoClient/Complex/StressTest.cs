@@ -24,10 +24,12 @@ namespace WebSockets.DemoClient.Complex
         private readonly IWebSocketClientFactory _clientFactory;
         private ArraySegment<byte> myTestBytes;
         private int receivedMessages = 0;
+        private static IDictionary<int, int> messageSizeMap = new Dictionary<int, int>() { { 32, 30 }, { 128, 126 }, { 512, 509}, { 1024, 1021}, { 2048, 2045}, { 4096, 4093}, { 8192, 8189}, { 10000, 9997},
+                { 100000, 99996}, {1000000, 999996}, { 10000000, 9999995 } };
 
         public StressTest(int seed, Uri uri, int numItems, int minNumBytesPerMessage, int maxBytesPerMessage)
         {
-            myTestBytes = GetPersonBytes(maxBytesPerMessage - GetDifference(maxBytesPerMessage));
+            myTestBytes = GetPersonBytes(messageSizeMap[maxBytesPerMessage]);
             _seed = seed;
             _uri = uri;
             _numItems = numItems;
@@ -35,12 +37,7 @@ namespace WebSockets.DemoClient.Complex
             _maxNumBytesPerMessage = maxBytesPerMessage;
             _clientFactory = new WebSocketClientFactory();
         }
-
-        private static int GetDifference(int numberOfBytesRequested)
-        {
-            return (int)Math.Floor((double)(numberOfBytesRequested.ToString().Length / 2)) + 1;
-        }
-
+        
         private ArraySegment<byte> GetPersonBytes(int count)
         {
             var person = new Person
