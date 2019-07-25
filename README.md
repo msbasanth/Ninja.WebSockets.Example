@@ -24,7 +24,7 @@ WebSockets.DemoClient.exe load
 
 ## Observations - Performance Readings
 
-| Message Size|Stream|Pipeline|
+| Message Size|Time takesn in Stream (ms)|Time takesn in Pipeline (ms)|
 |-------------|------|----|
 | 32 |22|23|
 |128 |26|26|
