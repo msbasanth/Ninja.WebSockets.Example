@@ -20,3 +20,19 @@ WebSockets.DemoClient.exe ws://localhost:27416/echo 5 1000 1024 1024
 ### Example Load Test
 Ninja.WebSockets.DemoServer.exe load
 WebSockets.DemoClient.exe load
+
+
+## Observations - Performance Readings
+
+| Message Size|Stream|Pipeline|
+|-------------|------|----|
+| 32 |22|23|
+|128 |26|26|
+|512 |23|26|
+|1024|26|29|
+|2048|25|28|
+|4096|26|27|
+
+Time is in milliseconds - Time taken for sending test bytes (created as per the inputted maxNumberOfBytesPerMessage) to the server 100 times and receiving them back.
+
+Here I could see Stream performed better in comparison to Pipelines when we have ProtoBuf deserialization also in place in the server.
